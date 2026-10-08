@@ -245,6 +245,29 @@ test_libfoo_and_fooifier("./linux64/fooifier", "./linux64/libfoo.so")
 # Run MachO tests
 test_libfoo_and_fooifier("./mac64/fooifier", "./mac64/libfoo.dylib")
 test_fat_libfoo("./mac64/libfoo_fat.dylib")
+
+# Rewrite the fat binary above with a `fat_header` using `FAT_MAGIC_64` (and so,
+# 64-bit `fat_arch_64` entries), keeping its slices in place.
+mktempdir() do dir
+    data = read("./mac64/libfoo_fat.dylib")
+    words(bytes) = ntoh.(reinterpret(UInt32, bytes))
+    magic, nfat_arch = words(data[1:8])
+    @test magic == 0xcafebabe
+    header = UInt8[reinterpret(UInt8, hton.(UInt32[0xcafebabf, nfat_arch]))...]
+    for i in 0:nfat_arch-1
+        cputype, cpusubtype, offset, size, align = words(data[9 + 20i:28 + 20i])
+        append!(header, reinterpret(UInt8, hton.(UInt32[cputype, cpusubtype])))
+        append!(header, reinterpret(UInt8, hton.(UInt64[offset, size])))
+        append!(header, reinterpret(UInt8, hton.(UInt32[align, 0])))
+    end
+    # The larger header must only overwrite the padding before the first slice
+    @test all(iszero, data[9 + 20nfat_arch:length(header)])
+    data[1:length(header)] = header
+
+    fat64_path = joinpath(dir, "libfoo_fat64.dylib")
+    write(fat64_path, data)
+    test_fat_libfoo(fat64_path)
+end
 test_metal("./macmetal/dummy")
 
 # Run COFF tests
